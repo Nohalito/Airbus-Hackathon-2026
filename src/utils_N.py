@@ -64,7 +64,7 @@ def subsample_frame(frame_df, n_points = 4096):
     Take the dataframe of a single LIDAR scan and sample randomly a given amount of point
     """
 
-    frame_df = frame_df[frame_df["label"] != "33"]
+    #frame_df = frame_df[frame_df["label"] != 33]
 
     labels = frame_df["label"].to_numpy(dtype=np.uint8)
     points = frame_df[["x", "y", "z", "reflectivity"]].to_numpy(dtype=np.float32)
@@ -97,9 +97,6 @@ def write_processed_data_h5(h5_path, landscape_dfs, landscape_ids, n_points = 40
     """
     Save the subsampled & processed data in the designated folder as a ".h5" file
     """
-    # Create processed datasets folder
-    os.makedirs(os.path.join(c.OUT_DIR, c.PROCESSED_DATA_PATH))
-
     with h5py.File(h5_path, "w") as h5f:
         for lid in landscape_ids:
             df = landscape_dfs[lid]
