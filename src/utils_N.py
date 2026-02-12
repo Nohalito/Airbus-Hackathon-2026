@@ -44,8 +44,8 @@ def first_preprocessing():
     
         df = df.merge(class_df, on = ["r", "g", "b"], how = "left")
         df["label"] = df["label"].fillna(c.LABEL_MAP['Other'])
+        df = df.iloc[df['label'] != 4]
         df['label'] = df['label'].astype('int32')
-
         df[['x', 'y', 'z']] = lu.spherical_to_local_cartesian(df)
 
         frames = lu.get_unique_poses(df)
@@ -117,3 +117,75 @@ def write_processed_data_h5(h5_path, landscape_dfs, landscape_ids, n_points = 40
                     data=lbls.astype(np.uint8),
                     compression="gzip"
                 )
+
+
+
+def fit_nn(epochs, model, criterion, optimizer, train_dl, valid_dl):
+    model_name = c.SELECTED_MODEL
+    valid_loss_min = np.inf
+    len_train, len_valid = 13720, 980
+    fields = [
+        'epoch', 'train_loss', 'train_acc', 'valid_loss', 'valid_acc'
+    ]
+    rows = []
+
+    for epoch in range(epochs):
+        train_loss, train_correct = 0, 0
+        train_loop = tqdm(train_dl)
+
+        model.train()
+        for batch in train_loop:
+            images, labels = batch[0].to(device), batch[1].to(device)
+            preds = model(images)
+            loss = criterion(preds, labels)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            train_loss += loss.item() * labels.size(0)
+            train_correct += get_num_correct(preds, labels)
+
+            train_loop.set_description(f'Epoch [{epoch+1:2d}/{epochs}]')
+            train_loop.set_postfix(
+                loss = loss.item(), acc=train_correct/len_train
+            )
+        train_loss = train_loss/len_train
+        train_acc = train_correct/len_train
+
+        model.eval()
+        with torch.no_grad():
+            valid_loss, valid_correct = 0, 0
+            for batch in valid_dl:
+                images, labels = batch[0].to(device), batch[1].to(device)
+                preds = model(images)
+                loss = criterion(preds, labels)
+                valid_loss += loss.item() * labels.size(0)
+                valid_correct += get_num_correct(preds, labels)
+
+            valid_loss = valid_loss/len_valid
+            valid_acc = valid_correct/len_valid
+
+            rows.append([epoch, train_loss, train_acc, valid_loss, valid_acc])
+
+            train_loop.write(
+                f'\n\t\tAvg train loss: {train_loss:.6f}', end='\t'
+            )
+            train_loop.write(f'Avg valid loss: {valid_loss:.6f}\n')
+
+            # save model if validation loss has decreased
+            # (sometimes also referred as "Early stopping")
+            if valid_loss <= valid_loss_min:
+                train_loop.write('\t\tvalid_loss decreased', end=' ')
+                train_loop.write(f'({valid_loss_min:.6f} -> {valid_loss:.6f})')
+                train_loop.write('\t\tsaving model...\n')
+                torch.save(
+                    model.state_dict(),
+                    f'../models/lr3e-5_{model_name}_{device}.pth'
+                )
+                valid_loss_min = valid_loss
+
+    # write running results for plots
+    with open(os.path.join(c.OUT_DIR, c.CSV_PATH, f'{model_name}.csv'), 'w') as csv_file:
+        csv_writer = csv.writer(csv_file)
+        csv_writer.writerow(fields)
+        csv_writer.writerows(rows)
