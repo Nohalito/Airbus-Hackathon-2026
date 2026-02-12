@@ -1,10 +1,11 @@
 # ===========================
 import pandas as pd
 import numpy as np
+import csv
 
 import h5py
 
-import tqdm
+from tqdm import tqdm
 
 import os
 import sys
@@ -13,8 +14,14 @@ sys.path.append('../src')
 
 import config as c
 import lidar_utils as lu
+
+import torch
 # ===========================
 
+
+# =========================
+# == 01 Pre-processing : ==
+# =========================
 
 
 def first_preprocessing():
@@ -119,73 +126,87 @@ def write_processed_data_h5(h5_path, landscape_dfs, landscape_ids, n_points = 40
                 )
 
 
+# ===================
+# == 02 Training : ==
+# ===================
 
-def fit_nn(epochs, model, criterion, optimizer, train_dl, valid_dl):
-    model_name = c.SELECTED_MODEL
+# Ty for this guy training loop
+# https://github.com/priyavrat-misra/xrays-and-gradcam?tab=readme-ov-file
+
+def fit_nn(epochs, model, criterion, optimizer, train_loader, val_loader, device):
+    """
+    Model training loop
+    """
+
     valid_loss_min = np.inf
-    len_train, len_valid = 13720, 980
-    fields = [
-        'epoch', 'train_loss', 'train_acc', 'valid_loss', 'valid_acc'
-    ]
+    len_train, len_valid = 0, 0
+    fields = ['epoch', 'train_loss', 'train_acc', 'valid_loss', 'valid_acc']
     rows = []
 
     for epoch in range(epochs):
-        train_loss, train_correct = 0, 0
-        train_loop = tqdm(train_dl)
-
         model.train()
-        for batch in train_loop:
-            images, labels = batch[0].to(device), batch[1].to(device)
-            preds = model(images)
-            loss = criterion(preds, labels)
+        train_loss, train_correct = 0, 0
+        train_loader = tqdm(train_loader, desc = "batch beepobed :")
+
+        for batch in train_loader:
+            points, labels = batch[0].to(device), batch[1].to(device)
+            preds = model(points)
+
             optimizer.zero_grad()
+            loss = criterion(preds.permute(0, 2, 1), labels)
             loss.backward()
             optimizer.step()
 
-            train_loss += loss.item() * labels.size(0)
-            train_correct += get_num_correct(preds, labels)
+            train_loss += loss.item()
+            train_correct += preds.argmax(dim = -1).eq(labels).sum().item()
 
-            train_loop.set_description(f'Epoch [{epoch+1:2d}/{epochs}]')
-            train_loop.set_postfix(
-                loss = loss.item(), acc=train_correct/len_train
-            )
+            len_train += labels.numel()
+
         train_loss = train_loss/len_train
         train_acc = train_correct/len_train
 
         model.eval()
         with torch.no_grad():
             valid_loss, valid_correct = 0, 0
-            for batch in valid_dl:
-                images, labels = batch[0].to(device), batch[1].to(device)
-                preds = model(images)
-                loss = criterion(preds, labels)
-                valid_loss += loss.item() * labels.size(0)
-                valid_correct += get_num_correct(preds, labels)
+
+            for batch in val_loader:
+                points, labels = batch[0].to(device), batch[1].to(device)
+
+                preds = model(points)
+                loss = criterion(preds.permute(0, 2, 1), labels)
+
+                valid_loss += loss.item()
+                valid_correct += preds.argmax(dim = -1).eq(labels).sum().item()
+
+                len_valid += labels.numel()
 
             valid_loss = valid_loss/len_valid
             valid_acc = valid_correct/len_valid
 
             rows.append([epoch, train_loss, train_acc, valid_loss, valid_acc])
 
-            train_loop.write(
+            train_loader.write(
                 f'\n\t\tAvg train loss: {train_loss:.6f}', end='\t'
             )
-            train_loop.write(f'Avg valid loss: {valid_loss:.6f}\n')
+            train_loader.write(f'Avg valid loss: {valid_loss:.6f}\n')
 
-            # save model if validation loss has decreased
-            # (sometimes also referred as "Early stopping")
             if valid_loss <= valid_loss_min:
-                train_loop.write('\t\tvalid_loss decreased', end=' ')
-                train_loop.write(f'({valid_loss_min:.6f} -> {valid_loss:.6f})')
-                train_loop.write('\t\tsaving model...\n')
-                torch.save(
-                    model.state_dict(),
-                    f'../models/lr3e-5_{model_name}_{device}.pth'
-                )
-                valid_loss_min = valid_loss
+                    train_loader.write('\t\tvalid_loss decreased', end=' ')
+                    train_loader.write(f'({valid_loss_min:.6f} -> {valid_loss:.6f})')
+                    train_loader.write('\t\tsaving model...\n')
+                    torch.save(
+                        model.state_dict(),
+                        f'../models/PointNetSeg_{device}.pth'
+                    )
+                    valid_loss_min = valid_loss
 
-    # write running results for plots
-    with open(os.path.join(c.OUT_DIR, c.CSV_PATH, f'{model_name}.csv'), 'w') as csv_file:
+    with open(os.path.join(c.OUT_DIR, c.CSV_PATH, f'PointNetSeg_{device}.csv'), 'w') as csv_file:
         csv_writer = csv.writer(csv_file)
         csv_writer.writerow(fields)
         csv_writer.writerows(rows)
+
+
+# =====================
+# == 03 Evaluation : ==
+# =====================
+

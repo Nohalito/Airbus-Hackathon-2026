@@ -5,8 +5,12 @@ import os
 # =================
 
 OUT_DIR = "../"
+
 RAW_DATA_PATH = "datasets/raw/"
 PROCESSED_DATA_PATH = "datasets/processed/"
+
+OUPUTS_PATH = "outputs/"
+CSV_PATH = os.path.join(OUPUTS_PATH, "CSVs/")
 
 # =====================
 # == Global variable ==
