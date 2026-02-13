@@ -36,6 +36,38 @@ class PointCloudDataset(Dataset):
             torch.tensor(points, dtype=torch.float32),
             torch.tensor(labels, dtype=torch.long)
         )
+    
+
+
+class PointCloudTestDataset(Dataset):
+
+    def __init__(self, h5_path):
+        self.h5_path = h5_path
+        self.index = []
+
+        with h5py.File(h5_path, "r") as f:
+            for landscape in f.keys():
+                for frame in f[landscape].keys():
+                    self.index.append((landscape, frame))
+
+    def __len__(self):
+        return len(self.index)
+
+    def __getitem__(self, idx):
+
+        landscape, frame = self.index[idx]
+
+        with h5py.File(self.h5_path, "r") as f:
+            grp = f[landscape][frame]
+            points = grp["points"][:]
+            labels = grp["labels"][:]
+            pose = grp["pose"][:]
+
+        return (
+            torch.tensor(points, dtype=torch.float32),
+            torch.tensor(labels, dtype=torch.long),
+            torch.tensor(pose, dtype=torch.float32)
+        )
 
 
 

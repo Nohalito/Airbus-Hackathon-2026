@@ -69,7 +69,7 @@ def first_preprocessing():
         df = df.iloc[df['label'] != c.LABEL_MAP['Other']]
         df['label'] = df['label'].astype('int32')
         df[['x', 'y', 'z']] = lu.spherical_to_local_cartesian(df)
-        df[['x', 'y', 'z']] =  world_coordinates(df)
+        #df[['x', 'y', 'z']] =  world_coordinates(df)
 
         frames = lu.get_unique_poses(df)
         df = df.merge(frames, on = ["ego_x", "ego_y", "ego_z", "ego_yaw"], how = "left")
@@ -137,6 +137,48 @@ def write_processed_data_h5(h5_path, landscape_dfs, landscape_ids, n_points = 40
                     "labels",
                     data = lbls.astype(np.uint8),
                     compression = "gzip"
+                )
+
+
+def write_test_processed_data_h5(h5_path, landscape_dfs, landscape_ids, n_points = 4096):
+    with h5py.File(h5_path, "w") as h5f:
+
+        for lid in landscape_ids:
+
+            df = landscape_dfs[lid]
+            lg = h5f.create_group(f"landscape_{lid}")
+
+            for pose_idx, frame_df in df.groupby("pose_index"):
+
+                pts, lbls = subsample_frame(frame_df, n_points)
+
+                fg = lg.create_group(f"frame_{pose_idx:04d}")
+
+                # ======================
+                # SAVE POINTS & LABELS
+                # ======================
+                fg.create_dataset(
+                    "points",
+                    data=pts.astype(np.float32),
+                    compression="gzip"
+                )
+
+                fg.create_dataset(
+                    "labels",
+                    data=lbls.astype(np.uint8),
+                    compression="gzip"
+                )
+
+                # ======================
+                # SAVE POSE
+                # ======================
+                pose = np.array([
+                    frame_df["pose_index"].iloc[0],
+                ], dtype=np.float32)
+
+                fg.create_dataset(
+                    "pose",
+                    data=pose
                 )
 
 

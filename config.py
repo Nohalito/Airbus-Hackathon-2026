@@ -30,4 +30,4 @@ LABEL_MAP = {
 }
 
 # 02 Training
-EPOCHS = 5
+EPOCHS = 3
