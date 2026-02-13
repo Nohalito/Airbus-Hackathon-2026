@@ -5,7 +5,7 @@ import csv
 
 import h5py
 
-from tqdm import tqdm
+import tqdm
 
 import os
 import sys
@@ -22,6 +22,21 @@ import torch
 # =========================
 # == 01 Pre-processing : ==
 # =========================
+
+
+
+def world_coordinates(df):
+    """
+    Convert cartesian coordinate into the landscape global coordinate using the 'ego' position
+    """
+    yaw = np.deg2rad(df['ego_yaw'].to_numpy() / 100.0)
+
+    x_world = np.cos(yaw)*df['x'].to_numpy() - np.sin(yaw)*df['y'].to_numpy() + df['ego_x'].to_numpy() /100.0
+    y_world = np.sin(yaw)*df['x'].to_numpy() + np.cos(yaw)*df['y'].to_numpy() + df['ego_y'].to_numpy()/100.0
+    z_world = df['z'].to_numpy() + df['ego_z'].to_numpy()/100.0
+
+    return np.column_stack((x_world, y_world, z_world))
+
 
 
 def first_preprocessing():
@@ -51,9 +66,10 @@ def first_preprocessing():
     
         df = df.merge(class_df, on = ["r", "g", "b"], how = "left")
         df["label"] = df["label"].fillna(c.LABEL_MAP['Other'])
-        df = df.iloc[df['label'] != 4]
+        df = df.iloc[df['label'] != c.LABEL_MAP['Other']]
         df['label'] = df['label'].astype('int32')
         df[['x', 'y', 'z']] = lu.spherical_to_local_cartesian(df)
+        df[['x', 'y', 'z']] =  world_coordinates(df)
 
         frames = lu.get_unique_poses(df)
         df = df.merge(frames, on = ["ego_x", "ego_y", "ego_z", "ego_yaw"], how = "left")
@@ -70,8 +86,6 @@ def subsample_frame(frame_df, n_points = 4096):
     """
     Take the dataframe of a single LIDAR scan and sample randomly a given amount of point
     """
-
-    #frame_df = frame_df[frame_df["label"] != 33]
 
     labels = frame_df["label"].to_numpy(dtype=np.uint8)
     points = frame_df[["x", "y", "z", "reflectivity"]].to_numpy(dtype=np.float32)
@@ -94,7 +108,7 @@ def subsample_frame(frame_df, n_points = 4096):
         extra = np.random.choice(idxs, n_points - len(idxs), replace=True)
         idxs.extend(extra)
 
-    idxs = np.asarray(idxs, dtype=np.int64)
+    idxs = np.asarray(idxs, dtype = np.int64)
 
     return points[idxs], labels[idxs]
 
@@ -116,13 +130,13 @@ def write_processed_data_h5(h5_path, landscape_dfs, landscape_ids, n_points = 40
 
                 fg.create_dataset(
                     "points",
-                    data=pts.astype(np.float32),
-                    compression="gzip"
+                    data = pts.astype(np.float32),
+                    compression = "gzip"
                 )
                 fg.create_dataset(
                     "labels",
-                    data=lbls.astype(np.uint8),
-                    compression="gzip"
+                    data = lbls.astype(np.uint8),
+                    compression = "gzip"
                 )
 
 
@@ -139,14 +153,14 @@ def fit_nn(epochs, model, criterion, optimizer, train_loader, val_loader, device
     """
 
     valid_loss_min = np.inf
-    len_train, len_valid = 0, 0
     fields = ['epoch', 'train_loss', 'train_acc', 'valid_loss', 'valid_acc']
     rows = []
 
     for epoch in range(epochs):
         model.train()
+        len_train = 0
         train_loss, train_correct = 0, 0
-        train_loader = tqdm(train_loader, desc = "batch beepobed :")
+        train_loader = tqdm.tqdm(train_loader, desc = "batch beepobed :")
 
         for batch in train_loader:
             points, labels = batch[0].to(device), batch[1].to(device)
@@ -157,7 +171,7 @@ def fit_nn(epochs, model, criterion, optimizer, train_loader, val_loader, device
             loss.backward()
             optimizer.step()
 
-            train_loss += loss.item()
+            train_loss += loss.item() * labels.numel()
             train_correct += preds.argmax(dim = -1).eq(labels).sum().item()
 
             len_train += labels.numel()
@@ -167,6 +181,7 @@ def fit_nn(epochs, model, criterion, optimizer, train_loader, val_loader, device
 
         model.eval()
         with torch.no_grad():
+            len_valid = 0
             valid_loss, valid_correct = 0, 0
 
             for batch in val_loader:
@@ -175,7 +190,7 @@ def fit_nn(epochs, model, criterion, optimizer, train_loader, val_loader, device
                 preds = model(points)
                 loss = criterion(preds.permute(0, 2, 1), labels)
 
-                valid_loss += loss.item()
+                valid_loss += loss.item() * labels.numel()
                 valid_correct += preds.argmax(dim = -1).eq(labels).sum().item()
 
                 len_valid += labels.numel()
@@ -185,9 +200,9 @@ def fit_nn(epochs, model, criterion, optimizer, train_loader, val_loader, device
 
             rows.append([epoch, train_loss, train_acc, valid_loss, valid_acc])
 
-            train_loader.write(
-                f'\n\t\tAvg train loss: {train_loss:.6f}', end='\t'
-            )
+            train_loader.write(f'\n\t\tAvg train acc: {train_acc:.6f}', end='\t')
+            train_loader.write(f'Avg valid acc: {valid_acc:.6f}\n')
+            train_loader.write(f'\n\t\tAvg train loss: {train_loss:.6f}', end='\t')
             train_loader.write(f'Avg valid loss: {valid_loss:.6f}\n')
 
             if valid_loss <= valid_loss_min:
